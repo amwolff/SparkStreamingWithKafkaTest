@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -21,8 +22,8 @@ func init() {
 }
 
 type reading struct {
-	Date  *string `json:"date"`
-	Value *string `json:"value"`
+	Date  *string  `json:"date"`
+	Value *float64 `json:"value"`
 }
 
 type data struct {
@@ -46,9 +47,11 @@ var brokersAddrs = []string{"master:9092", "slave01:9092", "slave02:9092",
 
 func initProducer() (sarama.SyncProducer, error) {
 	cfg := sarama.NewConfig()
+	cfg.Net.MaxOpenRequests = 1
 	cfg.Producer.RequiredAcks = sarama.WaitForAll
 	cfg.Producer.Idempotent = true
 	cfg.Producer.Return.Successes = true
+	cfg.Version = sarama.V0_11_0_0
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -56,6 +59,9 @@ func initProducer() (sarama.SyncProducer, error) {
 
 	return sarama.NewSyncProducer(brokersAddrs, cfg)
 }
+
+const topicName = "gios"
+
 func transmit(producer sarama.SyncProducer, key, val, date string) (
 	int32,
 	int64,
@@ -67,7 +73,7 @@ func transmit(producer sarama.SyncProducer, key, val, date string) (
 	}
 
 	p, o, err := producer.SendMessage(&sarama.ProducerMessage{
-		Topic:     "giosdata",
+		Topic:     topicName,
 		Key:       sarama.StringEncoder(key),
 		Value:     sarama.StringEncoder(val),
 		Timestamp: t,
@@ -79,6 +85,11 @@ func transmit(producer sarama.SyncProducer, key, val, date string) (
 	return p, o, nil
 }
 
+func ftoa(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// TODO: clean up `main`.
 func main() {
 	producer, err := initProducer()
 	if err != nil {
@@ -103,6 +114,11 @@ func main() {
 			var d data
 			if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
 				logrus.WithError(err).WithFields(errFields).Error("Decode")
+				if err := resp.Body.Close(); err != nil {
+					logrus.WithError(err).WithFields(errFields).Error("Close")
+					continue
+				}
+				continue
 			}
 
 			if err := resp.Body.Close(); err != nil {
@@ -119,11 +135,12 @@ func main() {
 			}
 
 			date := *d.Values[0].Date
+			val := *d.Values[0].Value
 
 			log := logrus.WithFields(logrus.Fields{
 				"station": name,
 				"date":    date,
-				"reading": *d.Values[0].Value,
+				"reading": val,
 			})
 
 			if prevDates[name] != date {
@@ -131,9 +148,10 @@ func main() {
 
 				log.Info("Got new data")
 
-				p, o, err := transmit(producer, name, *d.Values[0].Value, date)
+				p, o, err := transmit(producer, name, ftoa(val), date)
 				if err != nil {
 					log.WithError(err).Error("transmit")
+					continue
 				}
 				log.WithField("partition", p).
 					WithField("offset", o).
@@ -142,6 +160,7 @@ func main() {
 				log.Info("Already have recent data")
 			}
 		}
+		logrus.Info("Will now wait")
 		time.Sleep(10 * time.Minute)
 	}
 }
