@@ -9,8 +9,8 @@ import (
 )
 
 type reading struct {
-	Date  string  `json:"date"`
-	Value float64 `json:"value"`
+	Date  *string  `json:"date"`
+	Value *float64 `json:"value"`
 }
 
 type data struct {
@@ -54,14 +54,25 @@ func main() {
 				continue
 			}
 
+			// Unfortunately this API isn't perfect.
+			if d.Values == nil ||
+				d.Values[0].Date == nil ||
+				d.Values[0].Value == nil {
+				logrus.Warningf("New data isn't fully loaded for %s", name)
+				continue
+			}
+
+			date := *d.Values[0].Date
+
 			fields := logrus.Fields{
 				"station": name,
-				"date":    d.Values[0].Date,
-				"reading": d.Values[0].Value,
+				"date":    date,
+				"reading": *d.Values[0].Value,
 			}
-			if prevDates[name] != d.Values[0].Date {
+
+			if prevDates[name] != date {
+				prevDates[name] = date
 				toTransmit = append(toTransmit, d)
-				prevDates[name] = d.Values[0].Date
 				logrus.WithFields(fields).Info("Got new data")
 			} else {
 				logrus.WithFields(fields).Info("Already have recent data")
@@ -71,6 +82,6 @@ func main() {
 		// TODO: transmit new data to Kafka broker
 		logrus.Infof("Have %d tuples to transmit", len(toTransmit))
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(10 * time.Minute)
 	}
 }
