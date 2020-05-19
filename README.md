@@ -1,2 +1,1 @@
-# SparkStreamingWithKafkaTest
-Testing Java-based Hadoop MapReduce, HiveQL, Spark and Spark Streaming
+Testing Java-based Hadoop MapReduce, HiveQL, Spark and Spark Structured Streaming.
